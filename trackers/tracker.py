@@ -7,15 +7,24 @@ import pandas as pd
 import cv2
 import sys 
 sys.path.append('../')
-from utils import get_center_of_bbox, get_bbox_width, get_foot_position6
-
-
+from utils import get_center_of_bbox, get_bbox_width, get_foot_position
 
 class Tracker:
     def __init__(self, model_path):
         self.model = YOLO(model_path) 
         self.tracker = sv.ByteTrack()
-        
+
+    def add_position_to_tracks(sekf,tracks):
+        for object, object_tracks in tracks.items():
+            for frame_num, track in enumerate(object_tracks):
+                for track_id, track_info in track.items():
+                    bbox = track_info['bbox']
+                    if object == 'ball':
+                        position= get_center_of_bbox(bbox)
+                    else:
+                        position = get_foot_position(bbox)
+                    tracks[object][frame_num][track_id]['position'] = position
+
     def interpolate_ball_positions(self,ball_positions):
         ball_positions = [x.get(1,{}).get('bbox',[]) for x in ball_positions]
         df_ball_positions = pd.DataFrame(ball_positions,columns=['x1','y1','x2','y2'])
@@ -26,17 +35,15 @@ class Tracker:
 
         ball_positions = [{1: {"bbox":x}} for x in df_ball_positions.to_numpy().tolist()]
 
-        return ball_positions    
-    
-    
+        return ball_positions
+
     def detect_frames(self, frames):
         batch_size=20 
         detections = [] 
         for i in range(0,len(frames),batch_size):
             detections_batch = self.model.predict(frames[i:i+batch_size],conf=0.1)
             detections += detections_batch
-        return detections    
-    
+        return detections
 
     def get_object_tracks(self, frames, read_from_stub=False, stub_path=None):
         
@@ -44,9 +51,9 @@ class Tracker:
             with open(stub_path,'rb') as f:
                 tracks = pickle.load(f)
             return tracks
-        
+
         detections = self.detect_frames(frames)
-        
+
         tracks={
             "players":[],
             "referees":[],
@@ -56,22 +63,22 @@ class Tracker:
         for frame_num, detection in enumerate(detections):
             cls_names = detection.names
             cls_names_inv = {v:k for k,v in cls_names.items()}
-            
+
             # Covert to supervision Detection format
-            detection_supervision = sv.Detections.from_ultralytics(detection)   
-            
+            detection_supervision = sv.Detections.from_ultralytics(detection)
+
             # Convert GoalKeeper to player object
             for object_ind , class_id in enumerate(detection_supervision.class_id):
                 if cls_names[class_id] == "goalkeeper":
-                    detection_supervision.class_id[object_ind] = cls_names_inv["player"] 
-            
+                    detection_supervision.class_id[object_ind] = cls_names_inv["player"]
+
             # Track Objects
-            detection_with_tracks = self.tracker.update_with_detections(detection_supervision)        
-            
+            detection_with_tracks = self.tracker.update_with_detections(detection_supervision)
+
             tracks["players"].append({})
             tracks["referees"].append({})
             tracks["ball"].append({})
-            
+
             for frame_detection in detection_with_tracks:
                 bbox = frame_detection[0].tolist()
                 cls_id = frame_detection[3]
@@ -95,8 +102,7 @@ class Tracker:
                 pickle.dump(tracks,f)
 
         return tracks
-                    
-      
+    
     def draw_ellipse(self,frame,bbox,color,track_id=None):
         y2 = int(bbox[3])
         x_center, _ = get_center_of_bbox(bbox)
@@ -105,7 +111,8 @@ class Tracker:
         cv2.ellipse(
             frame,
             center=(x_center,y2),
-            axes=(int(width), int(0.35*width)), 
+            axes=(int(width), int(0.35*width)),
+            angle=0.0,
             startAngle=-45,
             endAngle=235,
             color = color,
@@ -156,7 +163,6 @@ class Tracker:
         cv2.drawContours(frame, [triangle_points],0,(0,0,0), 2)
 
         return frame
-
 
     def draw_team_ball_control(self,frame,frame_num,team_ball_control):
         # Draw a semi-transparent rectaggle 
@@ -209,25 +215,3 @@ class Tracker:
             output_video_frames.append(frame)
 
         return output_video_frames
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
